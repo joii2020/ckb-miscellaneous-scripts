@@ -10,7 +10,7 @@ SECP256K1_SRC := deps/secp256k1/src/ecmult_static_pre_context.h
 
 CFLAGS_MBEDTLS := -fPIC -Os -fno-builtin-printf -nostdinc -nostdlib -nostartfiles -fvisibility=hidden -fdata-sections -ffunction-sections -I deps/ckb-c-stdlib -I deps/ckb-c-stdlib/molecule -I deps/ckb-c-stdlib/libc -I deps/mbedtls/include -Wall -Werror -Wno-nonnull -Wno-nonnull-compare -Wno-unused-function -g
 LDFLAGS_MBEDTLS := -Wl,-static -Wl,--gc-sections
-PASSED_MBEDTLS_CFLAGS := -Os -fPIC -nostdinc -nostdlib -DCKB_DECLARATION_ONLY -I ../../ckb-c-stdlib/libc -fdata-sections -ffunction-sections
+PASSED_MBEDTLS_CFLAGS := -Os -fPIC -nostdinc -nostdlib -DCKB_DECLARATION_ONLY -I ../../ckb-c-stdlib/libc -I ../../ -fdata-sections -ffunction-sections
 
 CFLAGS_BLST := -fno-builtin-printf -Ideps/blst/bindings $(subst ckb-c-stdlib,ckb-c-stdlib-202106,$(CFLAGS))
 CKB_VM_CLI := ckb-vm-b-cli
@@ -138,8 +138,8 @@ build/simple_udt: c/simple_udt.c
 
 
 deps/mbedtls/library/libmbedcrypto.a:
-	cp deps/mbedtls-config-template.h deps/mbedtls/include/mbedtls/config.h
-	make -C deps/mbedtls/library CC=${CC} LD=${LD} CFLAGS="${PASSED_MBEDTLS_CFLAGS}" libmbedcrypto.a
+	cp deps/mbedtls-config-template.h deps/mbedtls/include/mbedtls/mbedtls_config.h
+	make -C deps/mbedtls/library CC=${CC} LD=${LD} CFLAGS="${PASSED_MBEDTLS_CFLAGS}" PYTHON=echo libmbedcrypto.a
 
 build/impl.o: deps/ckb-c-stdlib/libc/src/impl.c
 	$(CC) -c $(filter-out -DCKB_DECLARATION_ONLY, $(CFLAGS_MBEDTLS)) $(LDFLAGS_MBEDTLS) -o $@ $^

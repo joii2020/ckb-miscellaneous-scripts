@@ -14,7 +14,6 @@
 #include "blockchain.h"
 #include "mbedtls/ecdsa.h"
 #include "mbedtls/md.h"
-#include "mbedtls/md_internal.h"
 #include "mbedtls/memory_buffer_alloc.h"
 #include "mbedtls/rsa.h"
 
@@ -163,7 +162,7 @@ int validate_signature_rsa(void *prefilled_data,
   unsigned char alloc_buff[alloc_buff_size];
   mbedtls_memory_buffer_alloc_init(alloc_buff, alloc_buff_size);
 
-  mbedtls_rsa_init(&rsa, MBEDTLS_RSA_PKCS_V15, 0);
+  mbedtls_rsa_init(&rsa);
   CHECK2(input_info->key_size == RSA_VALID_KEY_SIZE1 ||
              input_info->key_size == RSA_VALID_KEY_SIZE2 ||
              input_info->key_size == RSA_VALID_KEY_SIZE3,
@@ -175,17 +174,16 @@ int validate_signature_rsa(void *prefilled_data,
       ERROR_RSA_INVALID_PARAM2);
   CHECK2(*output_len >= BLAKE160_SIZE, ERROR_RSA_INVALID_BLADE2B_SIZE);
 
-  mbedtls_mpi_read_binary_le(&rsa.E, (const unsigned char *)&input_info->E,
+  mbedtls_mpi_read_binary_le(&rsa.private_E, (const unsigned char *)&input_info->E,
                              sizeof(uint32_t));
-  mbedtls_mpi_read_binary_le(&rsa.N, input_info->N, input_info->key_size / 8);
-  rsa.len = (mbedtls_mpi_bitlen(&rsa.N) + 7) >> 3;
+  mbedtls_mpi_read_binary_le(&rsa.private_N, input_info->N, input_info->key_size / 8);
+  rsa.private_len = (mbedtls_mpi_bitlen(&rsa.private_N) + 7) >> 3;
 
   ret = md_string(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), msg_buf,
                   msg_size, hash_buf);
   CHECK(ret);
 
-  ret = mbedtls_rsa_pkcs1_verify(&rsa, NULL, NULL, MBEDTLS_RSA_PUBLIC,
-                                 MBEDTLS_MD_SHA256, hash_size, hash_buf,
+  ret = mbedtls_rsa_pkcs1_verify(&rsa, MBEDTLS_MD_SHA256, hash_size, hash_buf,
                                  get_rsa_signature(input_info));
   if (ret != 0) {
     mbedtls_printf("mbedtls_rsa_pkcs1_verify returned -0x%0x\n",
@@ -219,11 +217,11 @@ int serialize_secp256r1info(const mbedtls_ecp_point *Q, const mbedtls_mpi *r,
                             mbedtls_mpi *s, Secp256r1Info *info) {
   int err = 0;
 
-  err = mbedtls_mpi_write_binary_le(&Q->X, info->public_key,
+  err = mbedtls_mpi_write_binary_le(&Q->private_X, info->public_key,
                                     SECP256R1_PUBLIC_KEY_SIZE / 2);
   CHECK(err);
   err = mbedtls_mpi_write_binary_le(
-      &Q->Y, info->public_key + SECP256R1_PUBLIC_KEY_SIZE / 2,
+      &Q->private_Y, info->public_key + SECP256R1_PUBLIC_KEY_SIZE / 2,
       SECP256R1_PUBLIC_KEY_SIZE / 2);
   CHECK(err);
 
@@ -246,16 +244,16 @@ int deserialize_secp256r1info(mbedtls_ecp_point *Q, mbedtls_mpi *r,
   mbedtls_mpi_init(r);
   mbedtls_mpi_init(s);
 
-  err = mbedtls_mpi_read_binary_le(&Q->X, info->public_key,
+  err = mbedtls_mpi_read_binary_le(&Q->private_X, info->public_key,
                                    SECP256R1_PUBLIC_KEY_SIZE / 2);
   CHECK(err);
   err = mbedtls_mpi_read_binary_le(
-      &Q->Y, info->public_key + SECP256R1_PUBLIC_KEY_SIZE / 2,
+      &Q->private_Y, info->public_key + SECP256R1_PUBLIC_KEY_SIZE / 2,
       SECP256R1_PUBLIC_KEY_SIZE / 2);
   CHECK(err);
 
   const uint32_t one = 1;
-  err = mbedtls_mpi_read_binary_le(&Q->Z, (const unsigned char *)&one, 4);
+  err = mbedtls_mpi_read_binary_le(&Q->private_Z, (const unsigned char *)&one, 4);
   CHECK(err);
 
   err = mbedtls_mpi_read_binary_le(r, info->sig, SECP256R1_SIG_SIZE / 2);
@@ -635,7 +633,7 @@ int iso97962_sign(ISO97962Encoding *enc, uint8_t *msg, int msg_len,
                   uint8_t *block, int block_len) {
   int err = 0;
   const mbedtls_md_info_t *digest = mbedtls_md_info_from_type(enc->md);
-  int dig_size = digest->size;
+  int dig_size = mbedtls_md_get_size(digest);
   int t = 0;
   int delta = 0;
 
@@ -686,7 +684,7 @@ int iso97962_verify(ISO97962Encoding *enc, const uint8_t *block,
                     uint32_t origin_len, uint8_t *msg, uint32_t *msg_len) {
   int err = 0;
   const mbedtls_md_info_t *digest = mbedtls_md_info_from_type(enc->md);
-  int hash_len = digest->size;
+  int hash_len = mbedtls_md_get_size(digest);
   uint8_t hash[hash_len];
   int alloc_buff_size = 1024 * 1024;
   uint8_t alloc_buff[alloc_buff_size];
@@ -736,7 +734,7 @@ int iso97962_verify(ISO97962Encoding *enc, const uint8_t *block,
   }
   msg_start++;
 
-  int off = block_len - delta - digest->size;
+  int off = block_len - delta - mbedtls_md_get_size(digest);
   if ((off - msg_start) <= 0) {
     return ERROR_ISO97962_INVALID_ARG5;
   }
@@ -807,7 +805,7 @@ int validate_signature_iso9796_2(void *_p, const uint8_t *sig_buf,
 
   mbedtls_mpi_read_binary_le(&N, (uint8_t *)info->N, key_size);
   mbedtls_mpi_read_binary_le(&E, (uint8_t *)&info->E, 4);
-  mbedtls_rsa_init(&rsa, MBEDTLS_RSA_PKCS_V15, 0);
+  mbedtls_rsa_init(&rsa);
   mbedtls_rsa_import(&rsa, &N, NULL, NULL, NULL, &E);
   sig = get_rsa_signature(info);
 
